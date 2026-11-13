@@ -2,6 +2,9 @@
 
 一个为《Slay the Spire 2》制作的地图节点编辑模组：改写地图节点类型、批量替换、定向事件与远古，支持联机同步、撤销与粒子特效。
 
+steam创意工坊地址
+https://steamcommunity.com/sharedfiles/filedetails/?id=3838974684
+
 Idea based on **xiakk's NodeSwap**, used with permission.
 
 > 本模组由 AI 制作，可能存在 bug，欢迎反馈。
