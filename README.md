@@ -5,7 +5,7 @@
 steam创意工坊地址
 https://steamcommunity.com/sharedfiles/filedetails/?id=3838974684
 
-Idea based on **xiakk's NodeSwap**, used with permission.
+Idea based on **xiakkto's NodeSwap**, used with permission.
 
 > 本模组由 AI 制作，可能存在 bug，欢迎反馈。
 > This mod was made with AI and may contain bugs.
