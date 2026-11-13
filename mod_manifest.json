@@ -1,0 +1,14 @@
+{
+  "id": "NodeForge",
+  "name": "NodeForge 节点锻造",
+  "author": "you",
+  "description": "Rewrite map node types, force specific events, with in-game overlays and RitsuLib settings integration.",
+  "version": "1.0.0",
+  "has_pck": false,
+  "has_dll": true,
+  "affects_gameplay": true,
+  "dependencies": [
+    { "id": "BaseLib", "min_version": "3.4.8" },
+    { "id": "STS2-RitsuLib", "min_version": "0.6.10" }
+  ]
+}

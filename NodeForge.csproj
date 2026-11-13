@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>NodeForge</AssemblyName>
+    <RootNamespace>NodeForge</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <NoWarn>$(NoWarn);CS0436;CS0108;CS0114;CS0649;CS8632</NoWarn>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+  <PropertyGroup>
+    <!-- Optional local overrides (git-ignored): set RefsDir here or via the STS2_REFS_DIR env var. -->
+    <RefsDir Condition="Exists('$(MSBuildProjectDirectory)\refsdir_local.txt')">$([System.IO.File]::ReadAllText('$(MSBuildProjectDirectory)\refsdir_local.txt').Trim())</RefsDir>
+    <RefsDir Condition="'$(RefsDir)' == '' AND '$(STS2_REFS_DIR)' != ''">$(STS2_REFS_DIR)</RefsDir>
+    <RefsDir Condition="'$(RefsDir)' == ''">$(MSBuildProjectDirectory)\..\sts2base\deps\refs0113</RefsDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="sts2"><HintPath>$(RefsDir)\sts2.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(RefsDir)\0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="GodotSharp"><HintPath>$(RefsDir)\GodotSharp.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="SmartFormat"><HintPath>$(RefsDir)\SmartFormat.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="SmartFormat.ZString"><HintPath>$(RefsDir)\SmartFormat.ZString.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="BaseLib"><HintPath>$(RefsDir)\BaseLib.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="BaseLibCompatibilityHelper"><HintPath>$(RefsDir)\BaseLibCompatibilityHelper.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="STS2-RitsuLib"><HintPath>$(RefsDir)\STS2-RitsuLib.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="STS2-RitsuLib.Runtime"><HintPath>$(RefsDir)\STS2-RitsuLib.Runtime.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="STS2-RitsuLib.Settings"><HintPath>$(RefsDir)\STS2-RitsuLib.Settings.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="STS2-RitsuLib.Shared"><HintPath>$(RefsDir)\STS2-RitsuLib.Shared.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="STS2-RitsuLib.Ui"><HintPath>$(RefsDir)\STS2-RitsuLib.Ui.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>
+

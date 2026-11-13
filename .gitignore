@@ -1,0 +1,25 @@
+# Build output
+bin/
+obj/
+
+# Local-only build config (machine-specific paths)
+refsdir_local.txt
+
+# Build logs
+_build*.out
+_build*.out.err
+
+# Runtime / local files that must not be committed
+*.dll
+*.pdb
+*.bak
+nodeforge.cfg
+nodeforge_events.cache
+nodeforge_events.cache.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vs/
+.idea/
+*.user
