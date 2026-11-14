@@ -16,6 +16,10 @@ namespace NodeForge
     {
         // Stable 64-bit opcode for NodeForge node-edit commands.
         private const ulong Opcode = 0x4E46_534E_4F44UL; // "NFSNOD"
+        // Opcode for "a client sacrificed a relic worth N points" (client -> host).
+        private const ulong SacrificeOpcode = 0x4E46_5341_4352UL; // "NFSACR"
+        // Opcode for pool state broadcast (host -> clients), for read-only display.
+        private const ulong PoolOpcode = 0x4E46_504F_4F4CUL; // "NFPOOL"
 
         private static bool _registered;
 
@@ -38,7 +42,9 @@ namespace NodeForge
             try
             {
                 RitsuLibSidecarBus.RegisterHandler(Opcode, OnReceive);
-                Log.Info("net: sidecar handler registered (opcode " + Opcode + ")");
+                RitsuLibSidecarBus.RegisterHandler(SacrificeOpcode, OnReceiveSacrifice);
+                RitsuLibSidecarBus.RegisterHandler(PoolOpcode, OnReceivePool);
+                Log.Info("net: sidecar handler registered (opcode " + Opcode + ", " + SacrificeOpcode + ", " + PoolOpcode + ")");
             }
             catch (Exception e) { Log.Warn("net: register handler failed: " + e.Message); }
         }
@@ -47,6 +53,63 @@ namespace NodeForge
         private static readonly System.Collections.Generic.Dictionary<long, Command> _pending = new();
 
         private static long Key(MapCoord c) => ((long)c.col << 32) ^ (uint)c.row;
+
+        /// <summary>Client: tell the host that this player sacrificed a relic worth `points` (added to host pool).</summary>
+        public static void SendSacrifice(double points)
+        {
+            try
+            {
+                var rm = RunManager.Instance;
+                if (rm?.NetService == null) return;
+                if (rm.NetService.Type != MegaCrit.Sts2.Core.Multiplayer.Game.NetGameType.Client) return;
+                byte[] payload = BitConverter.GetBytes(points);
+                bool ok = RitsuLibSidecarHighLevelSend.TrySendAsClient(rm, SacrificeOpcode, payload,
+                    RitsuLibSidecarDeliverySemantics.StableSync);
+                if (!ok) Log.Warn("net: send sacrifice failed");
+            }
+            catch (Exception e) { Log.Warn("net: send sacrifice: " + e.Message); }
+        }
+
+        private static void OnReceiveSacrifice(RitsuLibSidecarDispatchContext ctx)
+        {
+            try
+            {
+                // Only the host ingests client sacrifice messages (added to the shared host pool).
+                if (!CombatExchange.IsAuthority) return;
+                var bytes = ctx.Payload.ToArray();
+                if (bytes.Length < sizeof(double)) return;
+                double pts = BitConverter.ToDouble(bytes, 0);
+                CombatExchange.AddPoints(pts);
+                Log.Info($"net: client sacrifice +{pts} (pool now {CombatExchange.Points})");
+            }
+            catch (Exception e) { Log.Warn("net: recv sacrifice: " + e.Message); }
+        }
+
+        /// <summary>Host: broadcast the current pool value so clients can display the real balance.</summary>
+        public static void BroadcastPool()
+        {
+            try
+            {
+                var rm = RunManager.Instance;
+                if (rm?.NetService?.Type != MegaCrit.Sts2.Core.Multiplayer.Game.NetGameType.Host) return;
+                byte[] payload = BitConverter.GetBytes(CombatExchange.Points);
+                RitsuLibSidecarHighLevelSend.TrySendAsHostBroadcast(rm, PoolOpcode, payload,
+                    RitsuLibSidecarDeliverySemantics.StableSync);
+            }
+            catch (Exception e) { Log.Warn("net: broadcast pool: " + e.Message); }
+        }
+
+        private static void OnReceivePool(RitsuLibSidecarDispatchContext ctx)
+        {
+            try
+            {
+                if (CombatExchange.IsAuthority) return; // host ignores
+                var bytes = ctx.Payload.ToArray();
+                if (bytes.Length < sizeof(double)) return;
+                CombatExchange.SetClientView(BitConverter.ToDouble(bytes, 0));
+            }
+            catch (Exception e) { Log.Warn("net: recv pool: " + e.Message); }
+        }
 
         /// <summary>Host: broadcast the CURRENT local state of a coord (idempotent). Used as a safety
         /// resync right before entering a node, so a lost earlier command can't desync the room.</summary>
@@ -113,7 +176,7 @@ namespace NodeForge
             }
             else
             {
-                SyncToast.Show($"已修改节点 ({coord.col},{coord.row}) → {NodeTypeCatalog.ToLabel(pointType)}");
+                SyncToast.Show(UiText.T($"已修改节点 ({coord.col},{coord.row}) → {NodeTypeCatalog.ToLabel(pointType)}", $"Changed node ({coord.col},{coord.row}) -> {NodeTypeCatalog.ToLabel(pointType)}"));
             }
         }
 
@@ -144,7 +207,7 @@ namespace NodeForge
             }
             else
             {
-                SyncToast.Show($"已还原节点 ({coord.col},{coord.row})");
+                SyncToast.Show(UiText.T($"已还原节点 ({coord.col},{coord.row})", $"Reverted node ({coord.col},{coord.row})"));
             }
         }
 
@@ -205,8 +268,9 @@ namespace NodeForge
 
                 var cmd = Decode(ctx.Payload);
                 ApplyLocal(cmd);
-                string verb = cmd.Kind == Op.Revert ? "还原" : "修改";
-                SyncToast.Show($"主机{verb}了节点 ({cmd.Col},{cmd.Row}) → {NodeTypeCatalog.ToLabel((MapPointType)cmd.PointType)}");
+                SyncToast.Show(UiText.T(
+                    $"主机{(cmd.Kind == Op.Revert ? "还原" : "修改")}了节点 ({cmd.Col},{cmd.Row}) → {NodeTypeCatalog.ToLabel((MapPointType)cmd.PointType)}",
+                    $"Host {(cmd.Kind == Op.Revert ? "reverted" : "changed")} node ({cmd.Col},{cmd.Row}) -> {NodeTypeCatalog.ToLabel((MapPointType)cmd.PointType)}"));
             }
             catch (Exception e) { Log.Warn("net: receive failed: " + e.Message); }
         }
@@ -218,11 +282,11 @@ namespace NodeForge
             {
                 var st = RunManager.Instance?.DebugOnlyGetState();
                 var map = st?.Map;
-                if (map == null) { SyncToast.Show("收到主机节点修改，但本地地图未就绪（可能不同步）"); return; }
+                if (map == null) { SyncToast.Show(UiText.T("收到主机节点修改，但本地地图未就绪（可能不同步）", "Got host node change but local map not ready (may be out of sync)")); return; }
                 var coord = new MapCoord { col = cmd.Col, row = cmd.Row };
                 MapPoint? p = null;
                 try { p = map.GetPoint(coord); } catch { }
-                if (p == null) { Log.Warn($"net: coord {cmd.Col},{cmd.Row} not on local map, skip"); SyncToast.Show($"收到主机节点修改 ({cmd.Col},{cmd.Row})，但本地无该节点（不同步）"); return; }
+                if (p == null) { Log.Warn($"net: coord {cmd.Col},{cmd.Row} not on local map, skip"); SyncToast.Show(UiText.T($"收到主机节点修改 ({cmd.Col},{cmd.Row})，但本地无该节点（不同步）", $"Got host node change ({cmd.Col},{cmd.Row}) but no such local node (out of sync)")); return; }
 
                 p.PointType = (MapPointType)cmd.PointType;
 
@@ -256,3 +320,4 @@ namespace NodeForge
         }
     }
 }
+

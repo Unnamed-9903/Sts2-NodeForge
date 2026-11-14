@@ -36,6 +36,10 @@ namespace NodeForge
         private ScrollContainer _relicScroll = null!;
         private PanelContainer _relicTip = null!;
         private Control _tipLayer = null!;
+        private HBoxContainer _resourceRow = null!;
+        private TextureRect _resourceIcon = null!;
+        private Label _resourceLabel = null!;
+        private Button _cheatBtn = null!;
         private RichTextLabel _relicTipLabel = null!;
         private LineEdit _search = null!;
         private Label _status = null!;
@@ -89,6 +93,110 @@ namespace NodeForge
         {
             try { return MegaCrit.Sts2.Core.Localization.LocManager.Instance?.Language ?? "zhs"; }
             catch { return "zhs"; }
+        }
+
+        private static Texture2D? _chipIcon;
+        private static Texture2D? TryGetChipIcon()
+        {
+            if (_chipIcon != null) return _chipIcon;
+            try
+            {
+                foreach (var r in MegaCrit.Sts2.Core.Models.ModelDb.AllRelics)
+                {
+                    if (r is MegaCrit.Sts2.Core.Models.Relics.GamblingChip)
+                    { _chipIcon = r.Icon; break; }
+                }
+            }
+            catch { }
+            return _chipIcon;
+        }
+
+        private void RefreshResource()
+        {
+            try
+            {
+                if (_resourceRow == null) return;
+                bool on = CombatExchange.Active;
+                _resourceRow.Visible = on;
+                if (on && _resourceLabel != null)
+                    _resourceLabel.Text = UiText.T($"万象之源：{CombatExchange.DisplayPoints:0}", $"EMC: {CombatExchange.DisplayPoints:0}");
+                if (_cheatBtn != null)
+                {
+                    bool show = on && Settings.Current.ExchangeCheatEnabled;
+                    _cheatBtn.Visible = show;
+                    _cheatBtn.Disabled = !CombatExchange.IsAuthority; // host only
+                    _cheatBtn.TooltipText = CombatExchange.IsAuthority ? "" : UiText.T("仅主机可用", "Host only");
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>Called when the exchange pool value changes (local or synced) to refresh the display.</summary>
+        public static void NotifyPoolChanged()
+        {
+            try { if (Instance != null && GodotObject.IsInstanceValid(Instance)) Instance.RefreshResource(); } catch { }
+        }
+
+        private void OpenCheatInput()
+        {
+            try
+            {
+                if (!CombatExchange.IsAuthority) { SyncToast.Show(UiText.T("只有主机可以增加 EMC。", "Only the host may add EMC.")); return; }
+                var dlg = new CanvasLayer { Layer = 241, Name = "NodeForgeCheatInput" };
+                AddChild(dlg);
+                var backdrop = new ColorRect { Color = new Color(0,0,0,0.55f) };
+                backdrop.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+                backdrop.GuiInput += e => { if (e is InputEventMouseButton { Pressed: true }) dlg.QueueFree(); };
+                dlg.AddChild(backdrop);
+                var center = new CenterContainer(); center.SetAnchorsPreset(Control.LayoutPreset.FullRect); center.MouseFilter = Control.MouseFilterEnum.Ignore; dlg.AddChild(center);
+                var panel = new PanelContainer { MouseFilter = Control.MouseFilterEnum.Stop, CustomMinimumSize = new Vector2(360,0) };
+                var sb = new StyleBoxFlat { BgColor = new Color("10242A"), BorderColor = UiTheme.Accent, BorderWidthBottom=2,BorderWidthLeft=2,BorderWidthRight=2,BorderWidthTop=2, CornerRadiusTopLeft=8,CornerRadiusTopRight=8,CornerRadiusBottomLeft=8,CornerRadiusBottomRight=8, ContentMarginLeft=16,ContentMarginRight=16,ContentMarginTop=14,ContentMarginBottom=14 };
+                panel.AddThemeStyleboxOverride("panel", sb);
+                center.AddChild(panel);
+                var v = new VBoxContainer(); panel.AddChild(v);
+                var lbl = new Label { Text = UiText.T("输入要增加的万象之源数量：", "Enter EMC amount to add:") };
+                lbl.AddThemeFontSizeOverride("font_size", 15); v.AddChild(lbl);
+                var edit = new LineEdit { Text = "10" };
+                edit.AddThemeFontSizeOverride("font_size", 16); v.AddChild(edit);
+                var row = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
+                row.AddThemeConstantOverride("separation", 14); v.AddChild(row);
+                var ok = UiTheme.MakeButton(UiText.T("增加", "Add"), 15); ok.CustomMinimumSize = new Vector2(120,38);
+                ok.Pressed += () => {
+                    if (double.TryParse(edit.Text, out var n))
+                    {
+                        if (n > 0) CombatExchange.AddPoints(n);
+                    }
+                    dlg.QueueFree();
+                };
+                row.AddChild(ok);
+                var cancel = UiTheme.MakeButton(UiText.T("取消", "Cancel"), 15); cancel.CustomMinimumSize = new Vector2(100,38);
+                cancel.Pressed += () => dlg.QueueFree(); row.AddChild(cancel);
+            }
+            catch (Exception e) { Log.Warn("cheat input: " + e.Message); }
+        }
+
+        /// <summary>Rebuild the target dropdown labels, appending the EMC cost in exchange mode.</summary>
+        private void RefreshTargetLabels()
+        {
+            try
+            {
+                if (_target == null) return;
+                int prev = _target.Selected;
+                bool on = CombatExchange.Active;
+                _target.Clear();
+                foreach (var o in NodeTypeCatalog.Hover)
+                {
+                    string label = o.Label;
+                    if (on)
+                    {
+                        double cost = CombatExchange.CostForTarget(o.ConfigId);
+                        label += UiText.T($" （{cost:0} 点）", $" ({cost:0} EMC)");
+                    }
+                    _target.AddItem(label);
+                }
+                if (prev >= 0 && prev < _target.ItemCount) _target.Selected = prev;
+            }
+            catch { }
         }
         private string _builtLang = "";
 
@@ -216,6 +324,25 @@ namespace NodeForge
             UiTheme.StyleLabel(_hoverInfo, 16, UiTheme.Text);
             root.AddChild(_hoverInfo);
 
+            // 万象之源 resource row (only shown in Equivalent-Exchange mode).
+            _resourceRow = new HBoxContainer { Visible = false };
+            _resourceRow.AddThemeConstantOverride("separation", 8);
+            root.AddChild(_resourceRow);
+            _resourceIcon = new TextureRect
+            {
+                CustomMinimumSize = new Vector2(28f, 28f),
+                StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+                Texture = TryGetChipIcon(),
+            };
+            _resourceRow.AddChild(_resourceIcon);
+            _resourceLabel = new Label { Text = "" };
+            UiTheme.StyleLabel(_resourceLabel, 17, UiTheme.Accent);
+            _resourceRow.AddChild(_resourceLabel);
+            _cheatBtn = UiTheme.MakeButton(T("作弊", "Cheat"), 13);
+            _cheatBtn.CustomMinimumSize = new Vector2(72f, 28f);
+            _cheatBtn.Pressed += OpenCheatInput;
+            _resourceRow.AddChild(_cheatBtn);
+
             _errorLabel = new Label { Text = "", AutowrapMode = TextServer.AutowrapMode.WordSmart, Visible = false };
             UiTheme.StyleLabel(_errorLabel, 15, UiTheme.Warn);
             root.AddChild(_errorLabel);
@@ -230,8 +357,7 @@ namespace NodeForge
             _target.AddThemeFontSizeOverride("font_size", 16);
             foreach (var o in NodeTypeCatalog.Hover) _target.AddItem(o.Label);
             _target.ItemSelected += _ => OnTargetChanged();
-            targetRow.AddChild(_target);
-            root.AddChild(targetRow);
+            targetRow.AddChild(_target);            root.AddChild(targetRow);
 
             // ---- Event section ----
             _eventSection = new VBoxContainer();
@@ -772,8 +898,13 @@ namespace NodeForge
             if (!_built) return;
             if (!NetAuth.CanEdit())
             {
-                ShowError(T("只有主机可以修改地图节点（联机客机不可修改）。", "Only the host may edit map nodes (clients cannot)."));
-                return;
+                // Clients may open F7 read-only in exchange mode (to see the host's real balance),
+                // but cannot apply/bulk. Non-exchange mode: clients still blocked.
+                if (!(CombatExchange.Active && NetAuth.IsClient()))
+                {
+                    ShowError(T("只有主机可以修改地图节点（联机客机不可修改）。", "Only the host may edit map nodes (clients cannot)."));
+                    return;
+                }
             }
             if (!MapNodeService.MeetsOpenCondition(HoverState.Current, HoverState.RunState, CurrentMap(), out string reason, HoverState.CurrentState))
             {
@@ -793,6 +924,7 @@ namespace NodeForge
             for (int i = 0; i < NodeTypeCatalog.Hover.Count; i++)
                 if (NodeTypeCatalog.Hover[i].ConfigId == cfg.HoverTargetNode) { sel = i; break; }
             if (sel < 0) sel = 0;
+            RefreshTargetLabels();
             _target.Selected = sel;
 
             // Default bulk source = hovered node's current type.
@@ -814,9 +946,14 @@ namespace NodeForge
             UpdateUndoButton();
             if (_bulkBtn != null)
             {
-                _bulkBtn.Disabled = !NetAuth.BatchAllowed();
-                _bulkBtn.TooltipText = NetAuth.BatchAllowed() ? "" : T("需进入游戏（跑局中）后才能批量修改", "Bulk editing is only available during a run");
+                bool bulkOk = NetAuth.BatchAllowed() && !CombatExchange.Active; // no bulk in exchange mode
+                _bulkBtn.Disabled = !bulkOk;
+                _bulkBtn.TooltipText = bulkOk ? "" : (CombatExchange.Active
+                    ? T("等价交换模式仅支持单点替换", "Exchange mode: single-node only")
+                    : T("需进入游戏（跑局中）后才能批量修改", "Bulk editing is only available during a run"));
             }
+            RefreshResource();
+            if (CombatExchange.Active && CombatExchange.IsAuthority) { try { NodeForgeNet.BroadcastPool(); } catch { } }
             _backdrop.Visible = true;
             _center.Visible = true;
             if (_tipLayer != null) _tipLayer.Visible = true;
@@ -916,6 +1053,29 @@ namespace NodeForge
             bool needsForced = NodeTypeCatalog.TryGetHoverOption(cfgId, out var opt) && opt.NeedsForced;
             string forceId = needsForced ? _selectedEventId : "";
 
+            // Equivalent-Exchange mode: random ancient is NOT allowed (must be a specific ancient), and the
+            // edit costs 万象之源 points.
+            double cost = 0;
+            if (CombatExchange.Active)
+            {
+                if (opt != null && opt.Force == ForceKind.Ancient && string.IsNullOrEmpty(forceId))
+                {
+                    _status.AddThemeColorOverride("font_color", UiTheme.Warn);
+                    _status.Text = T("等价交换模式下只能定向到具体远古，不支持随机远古。", "In exchange mode you must pick a specific ancient (no random ancient).");
+                    ShowError(T("请选择具体远古。", "Pick a specific ancient."));
+                    return;
+                }
+                cost = CombatExchange.CostForTarget(cfgId);
+                if (CombatExchange.Points + 1e-9 < cost)
+                {
+                    _status.AddThemeColorOverride("font_color", UiTheme.Warn);
+                    _status.Text = T($"万象之源不足（需要 {cost:0}，当前 {CombatExchange.Points:0}）。",
+                                     $"Not enough EMC (need {cost:0}, have {CombatExchange.Points:0}).");
+                    ShowError(T("资源不足。", "Not enough points."));
+                    return;
+                }
+            }
+
             // Block forcing events whose conditions aren't met (they'd become random '?' content anyway).
             if (needsForced && !string.IsNullOrEmpty(forceId))
             {
@@ -940,6 +1100,16 @@ namespace NodeForge
             }
             try
             {
+                // Exchange mode: charge points (host authority) BEFORE the edit; abort if it fails.
+                if (CombatExchange.Active && cost > 0)
+                {
+                    if (!CombatExchange.TrySpend(cost))
+                    {
+                        _status.AddThemeColorOverride("font_color", UiTheme.Warn);
+                        _status.Text = T("资源不足，未修改。", "Not enough points; not changed.");
+                        return;
+                    }
+                }
                 // Record undo history (original type/forced) before the command mutates the node.
                 bool hadF = ForcedEventRegistry.TryGet(pt!.coord, out var prevF);
                 EditHistory.Push(new NodeEditRecord(pt.coord, pt.PointType, hadF, prevF, MapMarks.IsMarked(pt.coord)));
@@ -963,6 +1133,7 @@ namespace NodeForge
                                  $"Set ({pt.coord.col},{pt.coord.row}) -> {target}.");
                 UpdateUndoButton();
                 UpdateHoverInfo();
+                RefreshResource();
             }
             catch (Exception e)
             {
@@ -1047,6 +1218,11 @@ namespace NodeForge
         {
             try
             {
+                if (CombatExchange.Active)
+                {
+                    ShowError(T("等价交换模式仅支持单点替换，禁用批量。", "Exchange mode allows single-node edits only (bulk disabled)."));
+                    return;
+                }
                 if (!NetAuth.CanEdit())
                 {
                     ShowError(T("只有主机可以修改地图节点。", "Only the host may edit map nodes."));
@@ -1146,6 +1322,7 @@ namespace NodeForge
         }
     }
 }
+
 
 
 

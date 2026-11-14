@@ -1,3 +1,4 @@
+using System;
 using STS2RitsuLib;
 using STS2RitsuLib.Settings;
 using STS2RitsuLib.Utils.Persistence;
@@ -11,6 +12,12 @@ namespace NodeForge
         /// <summary>Localized, live-resolved settings text (re-resolves on each display, so it follows
         /// the current game language without needing a restart).</summary>
         private static ModSettingsText Tx(string zh, string en) => ModSettingsText.Dynamic(() => UiText.T(zh, en));
+
+        private static string IntFmt(double d) => ((int)System.Math.Round(d)).ToString();
+
+        private static ModSettingsValueBinding<NodeForgeSettings, double> DoubleBinding(
+            Func<NodeForgeSettings, double> get, Action<NodeForgeSettings, double> set)
+            => new ModSettingsValueBinding<NodeForgeSettings, double>(ModEntry.ModId, DataKey, SaveScope.Global, get, set);
 
         public static void Register()
         {
@@ -103,6 +110,72 @@ namespace NodeForge
                                 NodeForgeSettings.PinyinSearchMode.Initial => UiText.T("首字母（lnwp）", "Initials"),
                                 _ => UiText.T("两者皆可", "Both"),
                             })))
+                    // ===================== Equivalent Exchange / 万象之源 =====================
+                    .AddSection("exchange", section => section
+                        .WithTitle(ModSettingsText.Dynamic(() => UiText.T("等价交换（万象之源）", "Equivalent Exchange (EMC)")))
+                        .WithEnabledWhen(() => CombatExchange.SettingsEditable)
+                        .WithDescription(ModSettingsText.Dynamic(() => UiText.T(
+                            "开启后：F7 仅可单点替换节点并消耗“万象之源”；F6 变为献祭键（悬停自己遗物→献祭换取点数）。资源与配置以主机为准。",
+                            "When on: F7 edits a single node for EMC points; F6 becomes the sacrifice key (hover your relic -> sacrifice for points). Host is authoritative.")))
+                        .AddToggle("exchange_enabled",
+                            ModSettingsText.Dynamic(() => UiText.T("开启等价交换模式", "Enable Equivalent Exchange")),
+                            new ModSettingsValueBinding<NodeForgeSettings, bool>(
+                                ModEntry.ModId, DataKey, SaveScope.Global,
+                                s => s.ExchangeEnabled, (s, v) => s.ExchangeEnabled = v))
+                        .AddToggle("exchange_cheat",
+                            ModSettingsText.Dynamic(() => UiText.T("显示作弊按钮（局内 EMC 旁，主机可用）", "Show cheat button (next to EMC in-run, host only)")),
+                            new ModSettingsValueBinding<NodeForgeSettings, bool>(
+                                ModEntry.ModId, DataKey, SaveScope.Global,
+                                s => s.ExchangeCheatEnabled, (s, v) => s.ExchangeCheatEnabled = v)))
+                    .AddSection("exchange_base", section => section
+                        .Collapsible(true)
+                        .WithTitle(ModSettingsText.Dynamic(() => UiText.T("初始资源与倍数", "Starting Points & Multiplier")))
+                        .WithEnabledWhen(() => CombatExchange.SettingsEditable)
+                        .AddSlider("exchange_start",
+                            ModSettingsText.Dynamic(() => UiText.T("开局初始点数", "Starting points")),
+                            DoubleBinding(s => s.ExchangeStartPoints, (s, v) => s.ExchangeStartPoints = v),
+                            0, 50, 1, d => ((int)System.Math.Round(d)).ToString())
+                        .AddSlider("exchange_mult",
+                            ModSettingsText.Dynamic(() => UiText.T("多人专属倍数（初始与消耗，默认2）", "Multiplayer-only multiplier (start & cost, default 2)")),
+                            DoubleBinding(s => s.ExchangeMultiplier, (s, v) => s.ExchangeMultiplier = v),
+                            1, 10, 1, d => ((int)System.Math.Round(d)).ToString())
+                        .AddSlider("exchange_mult_solo",
+                            ModSettingsText.Dynamic(() => UiText.T("单人专属倍数（挑战用，默认1）", "Singleplayer-only multiplier (challenge, default 1)")),
+                            DoubleBinding(s => s.ExchangeMultiplierSolo, (s, v) => s.ExchangeMultiplierSolo = v),
+                            1, 10, 1, d => ((int)System.Math.Round(d)).ToString())
+                        .AddEnumChoice("exchange_mult_mode",
+                            ModSettingsText.Dynamic(() => UiText.T("多人倍数模式", "Multiplayer multiplier mode")),
+                            new ModSettingsValueBinding<NodeForgeSettings, NodeForgeSettings.ExchangeMultMode>(
+                                ModEntry.ModId, DataKey, SaveScope.Global,
+                                s => s.ExchangeMultiplierMode, (s, v) => s.ExchangeMultiplierMode = v),
+                            v => ModSettingsText.Dynamic(() => v switch
+                            {
+                                NodeForgeSettings.ExchangeMultMode.PlayerCount => UiText.T("按人数倍", "By player count"),
+                                _ => UiText.T("固定倍数", "Fixed"),
+                            })))
+                    .AddSection("exchange_val", section => section
+                        .Collapsible(true)
+                        .WithTitle(ModSettingsText.Dynamic(() => UiText.T("遗物献祭价值（获得点数）", "Relic sacrifice value (points gained)")))
+                        .WithEnabledWhen(() => CombatExchange.SettingsEditable)
+                        .AddSlider("exv_starter", ModSettingsText.Dynamic(() => UiText.T("初始遗物", "Starter")), DoubleBinding(s => s.ExchangeValStarter, (s, v) => s.ExchangeValStarter = v), 0, 20, 1, IntFmt)
+                        .AddSlider("exv_common", ModSettingsText.Dynamic(() => UiText.T("普通", "Common")), DoubleBinding(s => s.ExchangeValCommon, (s, v) => s.ExchangeValCommon = v), 0, 20, 1, IntFmt)
+                        .AddSlider("exv_uncommon", ModSettingsText.Dynamic(() => UiText.T("罕见", "Uncommon")), DoubleBinding(s => s.ExchangeValUncommon, (s, v) => s.ExchangeValUncommon = v), 0, 20, 1, IntFmt)
+                        .AddSlider("exv_rare", ModSettingsText.Dynamic(() => UiText.T("稀有", "Rare")), DoubleBinding(s => s.ExchangeValRare, (s, v) => s.ExchangeValRare = v), 0, 20, 1, IntFmt)
+                        .AddSlider("exv_shop", ModSettingsText.Dynamic(() => UiText.T("商店", "Shop")), DoubleBinding(s => s.ExchangeValShop, (s, v) => s.ExchangeValShop = v), 0, 20, 1, IntFmt)
+                        .AddSlider("exv_ancient", ModSettingsText.Dynamic(() => UiText.T("先古", "Ancient")), DoubleBinding(s => s.ExchangeValAncient, (s, v) => s.ExchangeValAncient = v), 0, 20, 1, IntFmt)
+                        .AddSlider("exv_event", ModSettingsText.Dynamic(() => UiText.T("事件", "Event")), DoubleBinding(s => s.ExchangeValEvent, (s, v) => s.ExchangeValEvent = v), 0, 20, 1, IntFmt))
+                    .AddSection("exchange_cost", section => section
+                        .Collapsible(true)
+                        .WithTitle(ModSettingsText.Dynamic(() => UiText.T("节点修改消耗（消耗点数）", "Node-change cost (points spent)")))
+                        .WithEnabledWhen(() => CombatExchange.SettingsEditable)
+                        .AddSlider("exc_monster", ModSettingsText.Dynamic(() => UiText.T("小怪", "Monster")), DoubleBinding(s => s.ExchangeCostMonster, (s, v) => s.ExchangeCostMonster = v), 0, 30, 1, IntFmt)
+                        .AddSlider("exc_elite", ModSettingsText.Dynamic(() => UiText.T("精英", "Elite")), DoubleBinding(s => s.ExchangeCostElite, (s, v) => s.ExchangeCostElite = v), 0, 30, 1, IntFmt)
+                        .AddSlider("exc_question", ModSettingsText.Dynamic(() => UiText.T("问号(?)", "Question (?)")), DoubleBinding(s => s.ExchangeCostQuestion, (s, v) => s.ExchangeCostQuestion = v), 0, 30, 1, IntFmt)
+                        .AddSlider("exc_shop", ModSettingsText.Dynamic(() => UiText.T("商店", "Shop")), DoubleBinding(s => s.ExchangeCostShop, (s, v) => s.ExchangeCostShop = v), 0, 30, 1, IntFmt)
+                        .AddSlider("exc_treasure", ModSettingsText.Dynamic(() => UiText.T("宝箱", "Treasure")), DoubleBinding(s => s.ExchangeCostTreasure, (s, v) => s.ExchangeCostTreasure = v), 0, 30, 1, IntFmt)
+                        .AddSlider("exc_rest", ModSettingsText.Dynamic(() => UiText.T("火堆", "Campfire")), DoubleBinding(s => s.ExchangeCostRest, (s, v) => s.ExchangeCostRest = v), 0, 30, 1, IntFmt)
+                        .AddSlider("exc_event", ModSettingsText.Dynamic(() => UiText.T("定向事件", "Directed event")), DoubleBinding(s => s.ExchangeCostEvent, (s, v) => s.ExchangeCostEvent = v), 0, 30, 1, IntFmt)
+                        .AddSlider("exc_ancient", ModSettingsText.Dynamic(() => UiText.T("定向先古", "Directed ancient")), DoubleBinding(s => s.ExchangeCostAncient, (s, v) => s.ExchangeCostAncient = v), 0, 30, 1, IntFmt))
                     .AddSection("about", section => section
                         .WithTitle(ModSettingsText.Dynamic(() => UiText.T("说明", "About")))
                         .AddParagraph("about_body", ModSettingsText.Dynamic(() => UiText.T(
@@ -118,6 +191,10 @@ namespace NodeForge
         }
     }
 }
+
+
+
+
 
 
 

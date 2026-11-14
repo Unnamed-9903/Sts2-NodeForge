@@ -19,7 +19,17 @@ namespace NodeForge.Patches
 
                 if (MatchesCombo(k, cfg.Menu1Hotkey))
                 {
-                    Menu1Overlay.Toggle(__instance);
+                    if (CombatExchange.Active)
+                    {
+                        // Equivalent-Exchange mode: the Menu-1 key becomes the SACRIFICE key.
+                        var relic = RelicSacrifice.FindHoveredRelic();
+                        if (relic != null) RelicSacrifice.BeginSacrifice(relic);
+                        else SyncToast.Show(UiText.T("请把鼠标悬浮在你自己的遗物上再献祭", "Hover one of your own relics, then sacrifice"));
+                    }
+                    else
+                    {
+                        Menu1Overlay.Toggle(__instance);
+                    }
                     __instance.GetViewport().SetInputAsHandled();
                 }
                 else if (MatchesCombo(k, cfg.Menu2Hotkey))

@@ -16,6 +16,7 @@ namespace NodeForge.Patches
             MapMarks.Clear();
             EditHistory.Clear();
             BulkHistory.Clear();
+            try { CombatExchange.ResetForRun(); } catch { }
         }
     }
 
