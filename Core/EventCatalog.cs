@@ -73,12 +73,30 @@ namespace NodeForge
         private const int SchemaVersion = 8;
 
         // Mod's own version — keep in sync with mod_manifest.json. Any mod update invalidates the cache.
-        private const string ModVersion = "1.0.0";
+        private const string ModVersion = "1.0.4";
 
         // NOTE: extension is NOT .json so the mod loader doesn't try to parse it as a manifest.
-        public static string CachePath => Path.Combine(
-            Path.GetDirectoryName(typeof(EventCatalog).Assembly.Location) ?? ".",
-            "nodeforge_events.cache");
+        // Each language has its OWN cache file: nodeforge_events.<lang>.cache — so switching the game
+        // language always reads that language's independently captured texts.
+        private static string CacheDir =>
+            Path.GetDirectoryName(typeof(EventCatalog).Assembly.Location) ?? ".";
+
+        public static string CachePathFor(string lang) =>
+            Path.Combine(CacheDir, "nodeforge_events." + SanitizeLang(lang) + ".cache");
+
+        public static string CachePath => CachePathFor(_loadedLang == "" ? CurrentLang() : _loadedLang);
+
+        private static string SanitizeLang(string? lang)
+        {
+            if (string.IsNullOrWhiteSpace(lang)) return "zhs";
+            var sb = new System.Text.StringBuilder();
+            foreach (var ch in lang!)
+                if (char.IsLetterOrDigit(ch)) sb.Append(char.ToLowerInvariant(ch));
+            return sb.Length == 0 ? "zhs" : sb.ToString();
+        }
+
+        /// <summary>Language whose cache is currently loaded in memory.</summary>
+        private static string _loadedLang = "";
 
         private sealed class CacheDoc
         {
@@ -116,7 +134,7 @@ namespace NodeForge
                 {
                     try { gv = typeof(MegaCrit.Sts2.Core.Models.EventModel).Assembly.GetName().Version?.ToString() ?? "?"; } catch { }
                 }
-                return $"v{SchemaVersion}|mod{ModVersion}|game{gv}|lang{CurrentLang()}";
+                return $"v{SchemaVersion}|mod{ModVersion}|game{gv}|lang{(_loadedLang == "" ? CurrentLang() : _loadedLang)}";
             }
         }
 
@@ -135,29 +153,34 @@ namespace NodeForge
         {
             if (_loaded) return;
             _loaded = true;
+            string lang = CurrentLang();
+            LoadLanguage(lang);
+            try { Refresh(false); }
+            catch (Exception e) { Log.Warn("event refresh failed: " + e.Message); }
+            _loadedLang = lang;
+            _capturedLang = lang;
+        }
+
+        /// <summary>Load only the given language's own cache file (independent per language).</summary>
+        private static void LoadLanguage(string lang)
+        {
+            _events.Clear();
             try
             {
-                if (File.Exists(CachePath))
+                string path = CachePathFor(lang);
+                if (!File.Exists(path))
                 {
-                    var raw = File.ReadAllText(CachePath);
-                    var doc = JsonSerializer.Deserialize<CacheDoc>(raw, JsonOpts);
-                    // Load the cached events regardless of version so we never lose captured text
-                    // (the "mod removed -> black, text kept" feature depends on it). Version is only
-                    // informational; Refresh() below will reconcile (add new, mark missing).
-                    if (doc != null && doc.Events.Count > 0)
-                    {
-                        _events.Clear();
-                        _events.AddRange(doc.Events);
-                    }
+                    Log.Info($"event cache for '{lang}' not found -> will capture");
+                    return;
+                }
+                var doc = JsonSerializer.Deserialize<CacheDoc>(File.ReadAllText(path), JsonOpts);
+                if (doc != null && doc.Events.Count > 0)
+                {
+                    _events.AddRange(doc.Events);
+                    Log.Info($"event cache loaded: lang={lang}, {doc.Events.Count} events");
                 }
             }
-            catch (Exception e) { Log.Warn("event cache load failed: " + e.Message); }
-
-            // Always reconcile with the live model DB: add newly registered, refresh metadata, and
-            // mark events that disappeared as missing (kept).
-            try { Refresh(); }
-            catch (Exception e) { Log.Warn("event refresh failed: " + e.Message); }
-            _capturedLang = CurrentLang();
+            catch (Exception e) { Log.Warn("event cache load failed (" + lang + "): " + e.Message); }
         }
 
         /// <summary>Called when the menu opens. Always reconciles with the live model DB so events that
@@ -168,36 +191,35 @@ namespace NodeForge
         /// <summary>Language the current cached event texts were captured in.</summary>
         public static string CacheLanguage { get { return _capturedLang; } }
 
-        /// <summary>If the game language differs from the cached language, re-scan so titles/descriptions
-        /// are in the current language. Returns true if a re-scan happened.</summary>
+        /// <summary>If the game language differs from the loaded cache, SAVE the old language and LOAD the
+        /// new language's own cache (capturing it if it does not exist yet). Returns true if switched.</summary>
         public static bool EnsureLanguageFresh()
         {
             EnsureLoaded();
             try
             {
                 string lang = CurrentLang();
-                if (!string.IsNullOrEmpty(_capturedLang) && _capturedLang != lang)
-                {
-                    Refresh(true);   // force re-capture localized texts (keep ids/missing)
-                    _capturedLang = lang;
-                    Log.Info($"event language changed: {_capturedLang} -> rescan (now {lang})");
-                    return true;
-                }
+                if (string.IsNullOrEmpty(_loadedLang) || _loadedLang == lang) return false;
+
+                // Persist what we have under the OLD language file, then switch to the new one.
+                try { Save(); } catch { }
+                string old = _loadedLang;
+                LoadLanguage(lang);
+                try { Refresh(false); } catch { }
+                _loadedLang = lang;
+                _capturedLang = lang;
+                Log.Info($"event cache switched: {old} -> {lang}");
+                return true;
             }
-            catch (Exception e) { Log.Warn("event lang refresh: " + e.Message); }
+            catch (Exception e) { Log.Warn("event lang switch: " + e.Message); }
             return false;
         }
 
         public static void EnsureFresh()
         {
             EnsureLoaded();
-            try
-            {
-                string lang = CurrentLang();
-                bool langChanged = !string.IsNullOrEmpty(_capturedLang) && _capturedLang != lang;
-                Refresh(langChanged);
-                _capturedLang = lang;
-            }
+            EnsureLanguageFresh();
+            try { Refresh(false); }
             catch (Exception e) { Log.Warn("event ensurefresh: " + e.Message); }
         }
 
@@ -600,4 +622,6 @@ namespace NodeForge
         }
     }
 }
+
+
 
