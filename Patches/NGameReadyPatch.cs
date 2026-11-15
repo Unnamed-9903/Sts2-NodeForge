@@ -14,6 +14,7 @@ namespace NodeForge.Patches
             {
                 Menu1Overlay.EnsureAttached(__instance);
                 Menu2Overlay.EnsureAttached(__instance);
+                BossOverlay.EnsureAttached(__instance);
             }
             catch (System.Exception e) { Log.Warn("attach overlays: " + e.Message); }
         }
@@ -32,9 +33,11 @@ namespace NodeForge.Patches
                 {
                     Menu1Overlay.EnsureAttached(game);
                     Menu2Overlay.EnsureAttached(game);
+                    BossOverlay.EnsureAttached(game);
                 }
             }
             catch (System.Exception e) { Log.Warn("attach overlays (menu): " + e.Message); }
         }
     }
 }
+

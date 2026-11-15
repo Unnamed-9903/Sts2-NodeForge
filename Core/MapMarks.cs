@@ -26,9 +26,13 @@ namespace NodeForge
             {
                 _edited.Remove(coord);
                 var screen = NMapScreen.Instance;
-                if (screen == null) return;
-                var node = GetNode(screen, coord);
-                if (node is Node n) RemoveEffect(n);
+                if (screen != null)
+                {
+                    var node = GetNode(screen, coord);
+                    if (node is Node n) RemoveEffect(n);
+                }
+                var bn = GetBlitzNode(coord);
+                if (bn is Node b) RemoveEffect(b);
             }
             catch (Exception e) { Log.Warn("unmark fx: " + e.Message); }
         }
@@ -63,11 +67,25 @@ namespace NodeForge
             try
             {
                 if (!Settings.Current.MarkerEffectEnabled) return;
+                // Normal map node.
                 var screen = NMapScreen.Instance;
-                if (screen == null) return;
-                var node = GetNode(screen, coord);
-                if (node is not Control nodeCtl) return;
+                if (screen != null)
+                {
+                    var node = GetNode(screen, coord);
+                    if (node is Control c) { AttachEffect(c); return; }
+                }
+                // Blitz (top-bar linear) map node.
+                var bn = GetBlitzNode(coord);
+                if (bn is Control bc) AttachEffect(bc);
+            }
+            catch (Exception e) { Log.Warn("draw fx: " + e.Message); }
+        }
 
+        private static void AttachEffect(Control nodeCtl)
+        {
+            try
+            {
+                if (!Settings.Current.MarkerEffectEnabled) return;
                 RemoveEffect(nodeCtl);
 
                 var col = UiTheme.ParseColor(Settings.Current.MarkRingColor, new Color("FF3838"));
@@ -103,14 +121,14 @@ namespace NodeForge
                 p.ColorRamp = ramp;
 
                 Vector2 nodeSize = nodeCtl.Size;
-                if (nodeSize.X <= 1f || nodeSize.Y <= 1f) nodeSize = new Vector2(48f, 48f);
+                if (nodeSize.X <= 1f || nodeSize.Y <= 1f) nodeSize = new Vector2(35f, 35f);
                 p.Position = nodeSize / 2f;
                 p.EmissionShape = CpuParticles2D.EmissionShapeEnum.Sphere;
                 p.EmissionSphereRadius = Mathf.Max(nodeSize.X, nodeSize.Y) * 0.6f;
 
                 nodeCtl.CallDeferred(Node.MethodName.AddChild, p);
             }
-            catch (Exception e) { Log.Warn("draw fx: " + e.Message); }
+            catch (Exception e) { Log.Warn("attach fx: " + e.Message); }
         }
 
         private static void ClearEffectsOnly()
@@ -118,12 +136,17 @@ namespace NodeForge
             try
             {
                 var screen = NMapScreen.Instance;
-                if (screen == null) return;
-                var f = typeof(NMapScreen).GetField("_mapPointDictionary",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                if (f?.GetValue(screen) is System.Collections.IDictionary dict)
-                    foreach (System.Collections.DictionaryEntry e in dict)
-                        if (e.Value is Node n) RemoveEffect(n);
+                if (screen != null)
+                {
+                    var f = typeof(NMapScreen).GetField("_mapPointDictionary",
+                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                    if (f?.GetValue(screen) is System.Collections.IDictionary dict)
+                        foreach (System.Collections.DictionaryEntry e in dict)
+                            if (e.Value is Node n) RemoveEffect(n);
+                }
+                // Blitz nodes.
+                foreach (var bp in BlitzNodes())
+                    if (bp is Node bn) RemoveEffect(bn);
             }
             catch { }
         }
@@ -142,6 +165,32 @@ namespace NodeForge
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
                 if (f?.GetValue(screen) is System.Collections.IDictionary dict && dict.Contains(coord))
                     return dict[coord] as Node;
+            }
+            catch { }
+            return null;
+        }
+
+        /// <summary>Enumerate the Blitz top-bar map point nodes (empty when not in Blitz).</summary>
+        private static IEnumerable<Node> BlitzNodes()
+        {
+            MegaCrit.Sts2.Core.Nodes.CommonUi.NBlitzTopBarMap? blitz = null;
+            try { blitz = MegaCrit.Sts2.Core.Nodes.NRun.Instance?.GlobalUi?.TopBar?.BlitzMap; } catch { }
+            if (blitz == null) yield break;
+            System.Collections.Generic.IReadOnlyList<MegaCrit.Sts2.Core.Nodes.CommonUi.NBlitzTopBarMapPoint>? list = null;
+            try { list = blitz.MapPoints; } catch { }
+            if (list == null) yield break;
+            foreach (var p in list)
+                if (p != null && GodotObject.IsInstanceValid(p)) yield return p;
+        }
+
+        private static Node? GetBlitzNode(MapCoord coord)
+        {
+            try
+            {
+                var blitz = MegaCrit.Sts2.Core.Nodes.NRun.Instance?.GlobalUi?.TopBar?.BlitzMap;
+                if (blitz == null) return null;
+                foreach (var p in blitz.MapPoints)
+                    if (p != null && p.Point != null && p.Point.coord.Equals(coord)) return p;
             }
             catch { }
             return null;

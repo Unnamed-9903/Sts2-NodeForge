@@ -50,27 +50,98 @@ namespace NodeForge
             try { return relic.Rarity; } catch { return null; }
         }
 
-        /// <summary>Actually perform the removal (official API) and grant points. Client notifies host.</summary>
-        public static async void Commit(RelicModel relic, double value)
+        /// <summary>Called by the confirm dialog. Host removes locally + broadcasts; client sends a request
+        /// to the host (host-authoritative removal keeps all peers in sync).</summary>
+        public static void Commit(RelicModel relic, double value)
         {
             try
             {
                 if (relic == null) return;
-                // Official removal API.
-                await MegaCrit.Sts2.Core.Commands.RelicCmd.Remove(relic);
-
                 if (CombatExchange.IsAuthority)
                 {
-                    CombatExchange.AddPoints(value); // host pool
+                    ulong netId = 0; try { netId = relic.Owner?.NetId ?? 0; } catch { }
+                    string rid = ""; try { rid = relic.Id?.Entry ?? ""; } catch { }
+                    _ = RemoveAsync(relic, () =>
+                    {
+                        CombatExchange.AddPoints(value);
+                        NodeForgeNet.BroadcastSacrificeDone(netId, rid);
+                    });
                 }
                 else
                 {
-                    // Client: notify host to add these points to the shared pool.
-                    NodeForgeNet.SendSacrifice(value);
+                    // Client: don't remove locally; ask host to do it (host broadcasts removal to all).
+                    ulong netId = 0; try { var nn = MegaCrit.Sts2.Core.Context.LocalContext.NetId; if (nn != null) netId = nn.Value; } catch { }
+                    string rid = ""; try { rid = relic.Id?.Entry ?? ""; } catch { }
+                    NodeForgeNet.SendSacrificeRequest(netId, rid, value);
                 }
-                SyncToast.Show(UiText.T($"已献祭遗物，获得 {value:0} 点万象之源", $"Relic sacrificed; gained {value:0} EMC"));
             }
             catch (Exception e) { Log.Warn("sacrifice commit: " + e.Message); }
+        }
+
+        private static async System.Threading.Tasks.Task RemoveAsync(RelicModel relic, Action? after)
+        {
+            try { await MegaCrit.Sts2.Core.Commands.RelicCmd.Remove(relic); after?.Invoke(); }
+            catch (Exception e) { Log.Warn("relic remove: " + e.Message); }
+        }
+
+        /// <summary>Host-side: find the player's relic by id, remove it (official API), add points, broadcast.</summary>
+        public static void HostPerformSacrifice(ulong playerNetId, string relicId, double clientPoints)
+        {
+            try
+            {
+                var st = MegaCrit.Sts2.Core.Runs.RunManager.Instance?.DebugOnlyGetState();
+                var player = FindPlayer(st, playerNetId);
+                if (player == null) { Log.Warn("sacrifice: player not found " + playerNetId); return; }
+                var relic = FindRelic(player, relicId);
+                if (relic == null) { Log.Warn("sacrifice: relic not found " + relicId); return; }
+                // Host recomputes the value authoritatively from the relic's rarity.
+                double pts = CombatExchange.ValueOf(GetRarity(relic));
+                if (pts <= 0) pts = clientPoints;
+                _ = RemoveAsync(relic, () =>
+                {
+                    CombatExchange.AddPoints(pts);
+                    NodeForgeNet.BroadcastSacrificeDone(playerNetId, relicId);
+                    Log.Info($"sacrifice (host): player {playerNetId} relic {relicId} +{pts}");
+                });
+            }
+            catch (Exception e) { Log.Warn("host sacrifice: " + e.Message); }
+        }
+
+        /// <summary>Client-side: remove the relic the host told us was sacrificed (keep in sync, no points).</summary>
+        public static void ClientRemoveSacrificed(ulong playerNetId, string relicId)
+        {
+            try
+            {
+                var st = MegaCrit.Sts2.Core.Runs.RunManager.Instance?.DebugOnlyGetState();
+                var player = FindPlayer(st, playerNetId);
+                if (player == null) return;
+                var relic = FindRelic(player, relicId);
+                if (relic == null) return;
+                _ = RemoveAsync(relic, null);
+            }
+            catch (Exception e) { Log.Warn("client remove sacrificed: " + e.Message); }
+        }
+
+        private static MegaCrit.Sts2.Core.Entities.Players.Player? FindPlayer(MegaCrit.Sts2.Core.Runs.IRunState? st, ulong netId)
+        {
+            try
+            {
+                if (st?.Players == null) return null;
+                foreach (var p in st.Players) if (p.NetId == netId) return p;
+            }
+            catch { }
+            return null;
+        }
+
+        private static RelicModel? FindRelic(MegaCrit.Sts2.Core.Entities.Players.Player player, string relicId)
+        {
+            try
+            {
+                foreach (var r in player.Relics)
+                    if (string.Equals(r.Id?.Entry, relicId, System.StringComparison.OrdinalIgnoreCase)) return r;
+            }
+            catch { }
+            return null;
         }
     }
 }

@@ -16,6 +16,8 @@ namespace NodeForge
         // --- Overlay hotkeys (key names stored as strings, e.g. "F6") ---
         public string Menu1Hotkey { get; set; } = "F6";
         public string Menu2Hotkey { get; set; } = "F7";
+        /// <summary>Hotkey to open the Boss editor overlay (separate from Menu 1/2).</summary>
+        public string BossHotkey { get; set; } = "F8";
 
         // --- Menu 1: bulk node replacement (original nodeswap feature) ---
         public bool EffectDisabled { get; set; } = false;
@@ -97,6 +99,7 @@ namespace NodeForge
         public double ExchangeCostAncient { get; set; } = 4;   // 定向先古
         public double ExchangeCostEvent { get; set; } = 2;     // 定向事件
         public double ExchangeCostRest { get; set; } = 2;      // 火堆
+        public double ExchangeCostBoss { get; set; } = 2;      // 修改 Boss（等价交换）
 
         public enum PinyinSearchMode { Both = 0, Full = 1, Initial = 2 }
 
@@ -139,6 +142,7 @@ namespace NodeForge
         {
             Menu1Hotkey = o.Menu1Hotkey;
             Menu2Hotkey = o.Menu2Hotkey;
+            BossHotkey = o.BossHotkey;
             EffectDisabled = o.EffectDisabled;
             TargetNode = o.TargetNode;
             ConvertQuestion = o.ConvertQuestion;
@@ -181,6 +185,7 @@ namespace NodeForge
             ExchangeCostAncient = o.ExchangeCostAncient;
             ExchangeCostEvent = o.ExchangeCostEvent;
             ExchangeCostRest = o.ExchangeCostRest;
+            ExchangeCostBoss = o.ExchangeCostBoss;
         }
 
         public string Describe() =>

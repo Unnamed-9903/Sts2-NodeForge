@@ -18,8 +18,12 @@ namespace NodeForge
         private const ulong Opcode = 0x4E46_534E_4F44UL; // "NFSNOD"
         // Opcode for "a client sacrificed a relic worth N points" (client -> host).
         private const ulong SacrificeOpcode = 0x4E46_5341_4352UL; // "NFSACR"
+        // Opcode for "host performed a relic sacrifice; remove it everywhere" (host -> clients).
+        private const ulong SacrificeDoneOpcode = 0x4E46_5344_4F4EUL; // "NFSDON"
         // Opcode for pool state broadcast (host -> clients), for read-only display.
         private const ulong PoolOpcode = 0x4E46_504F_4F4CUL; // "NFPOOL"
+        // Opcode for boss-change sync (host -> clients).
+        private const ulong BossOpcode = 0x4E46_424F_5353UL; // "NFBOSS"
 
         private static bool _registered;
 
@@ -44,6 +48,8 @@ namespace NodeForge
                 RitsuLibSidecarBus.RegisterHandler(Opcode, OnReceive);
                 RitsuLibSidecarBus.RegisterHandler(SacrificeOpcode, OnReceiveSacrifice);
                 RitsuLibSidecarBus.RegisterHandler(PoolOpcode, OnReceivePool);
+                RitsuLibSidecarBus.RegisterHandler(BossOpcode, OnReceiveBoss);
+                RitsuLibSidecarBus.RegisterHandler(SacrificeDoneOpcode, OnReceiveSacrificeDone);
                 Log.Info("net: sidecar handler registered (opcode " + Opcode + ", " + SacrificeOpcode + ", " + PoolOpcode + ")");
             }
             catch (Exception e) { Log.Warn("net: register handler failed: " + e.Message); }
@@ -54,35 +60,73 @@ namespace NodeForge
 
         private static long Key(MapCoord c) => ((long)c.col << 32) ^ (uint)c.row;
 
-        /// <summary>Client: tell the host that this player sacrificed a relic worth `points` (added to host pool).</summary>
-        public static void SendSacrifice(double points)
+        /// <summary>Client: ask the host to perform a relic sacrifice for this player (host is authoritative
+        /// for relic removal + points, so all peers stay in sync).</summary>
+        public static void SendSacrificeRequest(ulong playerNetId, string relicId, double points)
         {
             try
             {
                 var rm = RunManager.Instance;
                 if (rm?.NetService == null) return;
                 if (rm.NetService.Type != MegaCrit.Sts2.Core.Multiplayer.Game.NetGameType.Client) return;
-                byte[] payload = BitConverter.GetBytes(points);
-                bool ok = RitsuLibSidecarHighLevelSend.TrySendAsClient(rm, SacrificeOpcode, payload,
+                using var ms = new MemoryStream();
+                using var w = new BinaryWriter(ms, Encoding.UTF8);
+                w.Write(points); w.Write(playerNetId); w.Write(relicId ?? "");
+                w.Flush();
+                bool ok = RitsuLibSidecarHighLevelSend.TrySendAsClient(rm, SacrificeOpcode, ms.ToArray(),
                     RitsuLibSidecarDeliverySemantics.StableSync);
-                if (!ok) Log.Warn("net: send sacrifice failed");
+                if (!ok) Log.Warn("net: send sacrifice request failed");
             }
-            catch (Exception e) { Log.Warn("net: send sacrifice: " + e.Message); }
+            catch (Exception e) { Log.Warn("net: send sacrifice request: " + e.Message); }
+        }
+
+        /// <summary>Host: broadcast that a player's relic was sacrificed (remove it on all peers).</summary>
+        public static void BroadcastSacrificeDone(ulong playerNetId, string relicId)
+        {
+            try
+            {
+                var rm = RunManager.Instance;
+                if (rm?.NetService?.Type != MegaCrit.Sts2.Core.Multiplayer.Game.NetGameType.Host) return;
+                using var ms = new MemoryStream();
+                using var w = new BinaryWriter(ms, Encoding.UTF8);
+                w.Write(playerNetId); w.Write(relicId ?? "");
+                w.Flush();
+                RitsuLibSidecarHighLevelSend.TrySendAsHostBroadcast(rm, SacrificeDoneOpcode, ms.ToArray(),
+                    RitsuLibSidecarDeliverySemantics.StableSync);
+            }
+            catch (Exception e) { Log.Warn("net: broadcast sacrifice done: " + e.Message); }
         }
 
         private static void OnReceiveSacrifice(RitsuLibSidecarDispatchContext ctx)
         {
             try
             {
-                // Only the host ingests client sacrifice messages (added to the shared host pool).
-                if (!CombatExchange.IsAuthority) return;
+                if (!CombatExchange.IsAuthority) return; // only host handles requests
                 var bytes = ctx.Payload.ToArray();
-                if (bytes.Length < sizeof(double)) return;
-                double pts = BitConverter.ToDouble(bytes, 0);
-                CombatExchange.AddPoints(pts);
-                Log.Info($"net: client sacrifice +{pts} (pool now {CombatExchange.Points})");
+                using var ms = new MemoryStream(bytes);
+                using var r = new BinaryReader(ms, Encoding.UTF8);
+                double pts = r.ReadDouble();
+                ulong netId = r.ReadUInt64();
+                string relicId = r.ReadString();
+                // Host authoritatively performs the removal + points, then tells everyone.
+                RelicSacrifice.HostPerformSacrifice(netId, relicId, pts);
             }
             catch (Exception e) { Log.Warn("net: recv sacrifice: " + e.Message); }
+        }
+
+        private static void OnReceiveSacrificeDone(RitsuLibSidecarDispatchContext ctx)
+        {
+            try
+            {
+                if (CombatExchange.IsAuthority) return; // host already applied locally
+                var bytes = ctx.Payload.ToArray();
+                using var ms = new MemoryStream(bytes);
+                using var r = new BinaryReader(ms, Encoding.UTF8);
+                ulong netId = r.ReadUInt64();
+                string relicId = r.ReadString();
+                RelicSacrifice.ClientRemoveSacrificed(netId, relicId);
+            }
+            catch (Exception e) { Log.Warn("net: recv sacrifice done: " + e.Message); }
         }
 
         /// <summary>Host: broadcast the current pool value so clients can display the real balance.</summary>
@@ -109,6 +153,42 @@ namespace NodeForge
                 CombatExchange.SetClientView(BitConverter.ToDouble(bytes, 0));
             }
             catch (Exception e) { Log.Warn("net: recv pool: " + e.Message); }
+        }
+
+        /// <summary>Host: broadcast a boss change (second flag, boss id, sync-dominion flag).</summary>
+        public static void SendBossChange(bool second, string bossId, bool syncDominion)
+        {
+            try
+            {
+                var rm = RunManager.Instance;
+                if (rm?.NetService?.Type != MegaCrit.Sts2.Core.Multiplayer.Game.NetGameType.Host) return;
+                using var ms = new MemoryStream();
+                using var w = new BinaryWriter(ms, Encoding.UTF8);
+                w.Write(second); w.Write(syncDominion); w.Write(bossId ?? "");
+                w.Flush();
+                RitsuLibSidecarHighLevelSend.TrySendAsHostBroadcast(rm, BossOpcode, ms.ToArray(),
+                    RitsuLibSidecarDeliverySemantics.StableSync);
+            }
+            catch (Exception e) { Log.Warn("net: send boss: " + e.Message); }
+        }
+
+        private static void OnReceiveBoss(RitsuLibSidecarDispatchContext ctx)
+        {
+            try
+            {
+                if (CombatExchange.IsAuthority) return; // host ignores echoes
+                var bytes = ctx.Payload.ToArray();
+                using var ms = new MemoryStream(bytes);
+                using var r = new BinaryReader(ms, Encoding.UTF8);
+                bool second = r.ReadBoolean();
+                bool syncDom = r.ReadBoolean();
+                string id = r.ReadString();
+                var st = RunManager.Instance?.DebugOnlyGetState();
+                if (st == null) return;
+                BossService.ApplyLocal(st, second, id, syncDom, out var err);
+                if (!string.IsNullOrEmpty(err)) SyncToast.Show(UiText.T($"收到主机 Boss 修改但应用失败：{err}", $"Host boss change failed: {err}"));
+            }
+            catch (Exception e) { Log.Warn("net: recv boss: " + e.Message); }
         }
 
         /// <summary>Host: broadcast the CURRENT local state of a coord (idempotent). Used as a safety
@@ -288,6 +368,15 @@ namespace NodeForge
                 try { p = map.GetPoint(coord); } catch { }
                 if (p == null) { Log.Warn($"net: coord {cmd.Col},{cmd.Row} not on local map, skip"); SyncToast.Show(UiText.T($"收到主机节点修改 ({cmd.Col},{cmd.Row})，但本地无该节点（不同步）", $"Got host node change ({cmd.Col},{cmd.Row}) but no such local node (out of sync)")); return; }
 
+                // Diagnostic: snapshot all point types before, to detect unintended neighbour changes.
+                System.Collections.Generic.Dictionary<MapCoord, MapPointType>? snap = null;
+                try
+                {
+                    snap = new System.Collections.Generic.Dictionary<MapCoord, MapPointType>();
+                    foreach (var q in map.GetAllMapPoints()) { try { snap[q.coord] = q.PointType; } catch { } }
+                }
+                catch { }
+
                 p.PointType = (MapPointType)cmd.PointType;
 
                 byte fk = cmd.ForceKind;
@@ -297,18 +386,23 @@ namespace NodeForge
                     ForcedEventRegistry.Set(coord, string.IsNullOrEmpty(cmd.ForcedId) ? ForcedEventRegistry.RandomAncientToken : cmd.ForcedId);
                 else ForcedEventRegistry.Set(coord, string.IsNullOrEmpty(cmd.ForcedId) ? null : cmd.ForcedId);
 
-                // Refresh the node's visuals so the client sees it immediately.
+                // Refresh the whole map so icons update reliably (RefreshVisualsInstantly doesn't set icons).
+                try { RunManager.Instance?.InvokeMapChanged(false); } catch { }
+                // Diagnostic: log any OTHER coord whose type changed (should be none).
                 try
                 {
-                    var screen = MegaCrit.Sts2.Core.Nodes.Screens.Map.NMapScreen.Instance;
-                    var f = typeof(MegaCrit.Sts2.Core.Nodes.Screens.Map.NMapScreen)
-                        .GetField("_mapPointDictionary", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                    if (screen != null && f?.GetValue(screen) is System.Collections.IDictionary dict && dict.Contains(coord))
+                    if (snap != null)
                     {
-                        var node = dict[coord];
-                        var m = node?.GetType().GetMethod("RefreshVisualsInstantly",
-                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.FlattenHierarchy);
-                        m?.Invoke(node, null);
+                        foreach (var q in map.GetAllMapPoints())
+                        {
+                            try
+                            {
+                                if (q.coord.Equals(coord)) continue;
+                                if (snap.TryGetValue(q.coord, out var before) && before != q.PointType)
+                                    Log.Warn($"ANOMALY: neighbour {q.coord} changed {before}->{q.PointType} while editing {coord}");
+                            }
+                            catch { }
+                        }
                     }
                 }
                 catch { }

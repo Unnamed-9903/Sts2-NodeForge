@@ -28,18 +28,26 @@ namespace NodeForge.Patches
                     }
                     else
                     {
+                        Menu2Overlay.CloseIfOpen(); BossOverlay.CloseIfOpen();
                         Menu1Overlay.Toggle(__instance);
                     }
                     __instance.GetViewport().SetInputAsHandled();
                 }
                 else if (MatchesCombo(k, cfg.Menu2Hotkey))
                 {
+                    Menu1Overlay.CloseIfOpen(); BossOverlay.CloseIfOpen();
                     Menu2Overlay.Toggle(__instance);
+                    __instance.GetViewport().SetInputAsHandled();
+                }
+                else if (MatchesCombo(k, cfg.BossHotkey))
+                {
+                    Menu1Overlay.CloseIfOpen(); Menu2Overlay.CloseIfOpen();
+                    BossOverlay.Toggle(__instance);
                     __instance.GetViewport().SetInputAsHandled();
                 }
                 else if ((long)k.Keycode == (long)Key.Escape)
                 {
-                    bool handled = Menu1Overlay.CloseIfOpen() | Menu2Overlay.CloseIfOpen();
+                    bool handled = Menu1Overlay.CloseIfOpen() | Menu2Overlay.CloseIfOpen() | BossOverlay.CloseIfOpen();
                     if (handled) __instance.GetViewport().SetInputAsHandled();
                 }
             }

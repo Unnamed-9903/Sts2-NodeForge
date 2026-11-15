@@ -1293,20 +1293,30 @@ namespace NodeForge
         {
             try
             {
-                var screen = MegaCrit.Sts2.Core.Nodes.Screens.Map.NMapScreen.Instance;
-                if (screen == null) return;
-                var dictField = typeof(MegaCrit.Sts2.Core.Nodes.Screens.Map.NMapScreen)
-                    .GetField("_mapPointDictionary", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                if (dictField?.GetValue(screen) is System.Collections.IDictionary dict && dict.Contains(point.coord))
-                {
-                    var node = dict[point.coord];
-                    var m = node?.GetType().GetMethod("RefreshVisualsInstantly",
-                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.FlattenHierarchy);
-                    m?.Invoke(node, null);
-                }
                 MapMarks.MarkEdited(point.coord);
+                // Reliable full refresh: rebuild the map nodes so icons (incl. style-mod overrides and Boss
+                // spine art) are correct. RefreshVisualsInstantly alone does NOT update the icon texture.
+                try { MegaCrit.Sts2.Core.Runs.RunManager.Instance?.InvokeMapChanged(false); }
+                catch { }
             }
             catch (Exception e) { Log.Warn("refresh node visual: " + e.Message); }
+        }
+
+        /// <summary>Refresh a map-point node's icon/state. Calls UpdateIcon (the real texture setter) and
+        /// related refresh methods by name, so it also works when style mods have wrapped the icon logic.
+        /// Falls back to a deferred re-call on the next frame.</summary>
+        internal static void RefreshNodeObject(Godot.Node? node)
+        {
+            try
+            {
+                if (node == null) return;
+                const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+                var t = node.GetType();
+                t.GetMethod("UpdateIcon", F)?.Invoke(node, null);
+                t.GetMethod("RefreshState", F)?.Invoke(node, null);
+                t.GetMethod("RefreshColorInstantly", F)?.Invoke(node, null);
+            }
+            catch (Exception e) { Log.Warn("refresh node object: " + e.Message); }
         }
 
         private void HidePanel()

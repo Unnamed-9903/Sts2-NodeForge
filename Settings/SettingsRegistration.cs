@@ -45,7 +45,13 @@ namespace NodeForge
                             ModSettingsText.Dynamic(() => UiText.T("子菜单2：悬浮编辑节点", "Menu 2: hover-edit node")),
                             new ModSettingsValueBinding<NodeForgeSettings, string>(
                                 ModEntry.ModId, DataKey, SaveScope.Global,
-                                s => s.Menu2Hotkey, (s, v) => s.Menu2Hotkey = v)))
+                                s => s.Menu2Hotkey, (s, v) => s.Menu2Hotkey = v))
+                        .AddKeyBinding(
+                            "toggle_boss",
+                            ModSettingsText.Dynamic(() => UiText.T("Boss 编辑器（独立面板）", "Boss editor (separate)")),
+                            new ModSettingsValueBinding<NodeForgeSettings, string>(
+                                ModEntry.ModId, DataKey, SaveScope.Global,
+                                s => s.BossHotkey, (s, v) => s.BossHotkey = v)))
                     .AddSection("eventcolors", section => section
                         .WithTitle(ModSettingsText.Dynamic(() => UiText.T("事件列表颜色", "Event list colours")))
                         .WithDescription(ModSettingsText.Dynamic(() => UiText.T(
@@ -174,6 +180,7 @@ namespace NodeForge
                         .AddSlider("exc_shop", ModSettingsText.Dynamic(() => UiText.T("商店", "Shop")), DoubleBinding(s => s.ExchangeCostShop, (s, v) => s.ExchangeCostShop = v), 0, 30, 1, IntFmt)
                         .AddSlider("exc_treasure", ModSettingsText.Dynamic(() => UiText.T("宝箱", "Treasure")), DoubleBinding(s => s.ExchangeCostTreasure, (s, v) => s.ExchangeCostTreasure = v), 0, 30, 1, IntFmt)
                         .AddSlider("exc_rest", ModSettingsText.Dynamic(() => UiText.T("火堆", "Campfire")), DoubleBinding(s => s.ExchangeCostRest, (s, v) => s.ExchangeCostRest = v), 0, 30, 1, IntFmt)
+                        .AddSlider("exc_boss", ModSettingsText.Dynamic(() => UiText.T("修改 Boss", "Change boss")), DoubleBinding(s => s.ExchangeCostBoss, (s, v) => s.ExchangeCostBoss = v), 0, 30, 1, IntFmt)
                         .AddSlider("exc_event", ModSettingsText.Dynamic(() => UiText.T("定向事件", "Directed event")), DoubleBinding(s => s.ExchangeCostEvent, (s, v) => s.ExchangeCostEvent = v), 0, 30, 1, IntFmt)
                         .AddSlider("exc_ancient", ModSettingsText.Dynamic(() => UiText.T("定向先古", "Directed ancient")), DoubleBinding(s => s.ExchangeCostAncient, (s, v) => s.ExchangeCostAncient = v), 0, 30, 1, IntFmt))
                     .AddSection("about", section => section
