@@ -172,23 +172,28 @@ namespace NodeForge
             var fk = NodeTypeCatalog.HoverConfigIdToPointType(targetCfgId, out var forceKind);
             byte forceByte = forceKind == ForceKind.Ancient ? (byte)2 : forceKind == ForceKind.Event ? (byte)1 : (byte)0;
 
-            foreach (var p in pts)
+            NodeForgeNet.BeginBatch();
+            try
             {
-                if (p == null) continue;
-                if (p.PointType == MapPointType.Boss) continue;
-                if (prot.Contains(p.coord)) continue;
-                // Never bulk-convert to/from Ancient (crashes NNormalMapPoint in 0.113).
-                if (p.PointType == MapPointType.Ancient) continue;
-                if (!shouldConvert(p.PointType)) continue;
-                snap.Changed.Add((p.coord, p.PointType));
-                string fid = forceByte == 2 ? "" : (forceByte == 1 ? forceEventId ?? "" : "");
-                // Route through the unified command path (same as clients). SubmitApply mutates locally
-                // and broadcasts if host; when not broadcasting (auto at map-gen) just apply locally.
-                if (broadcast)
-                    NodeForgeNet.SubmitApply(p.coord, fk, forceByte, fid);
-                else
-                    ApplyHoverEdit(p, targetCfgId, forceEventId ?? "", record: false);
+                foreach (var p in pts)
+                {
+                    if (p == null) continue;
+                    if (p.PointType == MapPointType.Boss) continue;
+                    if (prot.Contains(p.coord)) continue;
+                    // Never bulk-convert to/from Ancient (crashes NNormalMapPoint in 0.113).
+                    if (p.PointType == MapPointType.Ancient) continue;
+                    if (!shouldConvert(p.PointType)) continue;
+                    snap.Changed.Add((p.coord, p.PointType));
+                    string fid = forceByte == 2 ? "" : (forceByte == 1 ? forceEventId ?? "" : "");
+                    // Route through the unified command path (same as clients). SubmitApply mutates locally
+                    // and broadcasts if host; when not broadcasting (auto at map-gen) just apply locally.
+                    if (broadcast)
+                        NodeForgeNet.SubmitApply(p.coord, fk, forceByte, fid);
+                    else
+                        ApplyHoverEdit(p, targetCfgId, forceEventId ?? "", record: false);
+                }
             }
+            finally { NodeForgeNet.EndBatch(); }
             return snap;
         }
 
@@ -217,6 +222,34 @@ namespace NodeForge
                 }
             }
             catch (Exception ex) { Log.Warn("collect traveled: " + ex.Message); }
+
+            // Authoritative "already visited" list works for BOTH normal and Blitz maps. This is the key
+            // protection for Blitz (which has no NMapScreen point dictionary).
+            try
+            {
+                if (runState != null)
+                {
+                    foreach (var c in runState.VisitedMapCoords) set.Add(c);
+                }
+            }
+            catch (Exception ex) { Log.Warn("collect visited coords: " + ex.Message); }
+
+            // Blitz extra safety: protect every node up to and including the current one (linear map order).
+            try
+            {
+                if (map is BlitzActMap bm && runState?.CurrentMapPoint != null)
+                {
+                    var cur = runState.CurrentMapPoint.coord;
+                    foreach (var p in bm.GetMapPoints())
+                    {
+                        if (p == null) continue;
+                        set.Add(p.coord);                 // protects all up to current below
+                        if (p.coord.Equals(cur)) break;
+                    }
+                }
+            }
+            catch (Exception ex) { Log.Warn("collect blitz past: " + ex.Message); }
+
             return set;
         }
 

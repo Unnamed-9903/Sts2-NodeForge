@@ -33,6 +33,10 @@ namespace NodeForge
         [JsonIgnore] public bool ConvertTreasure { get; set; } = false;
         [JsonIgnore] public bool ConvertAncient { get; set; } = false;
 
+        /// <summary>Session-only: when on, newly generated maps are auto-replaced using the Menu-1 rule.
+        /// Default off; NOT exposed in the settings page and NOT persisted. Singleplayer only.</summary>
+        [JsonIgnore] public bool AutoApplyFutureMaps { get; set; } = false;
+
         // Ancient variation (fixed: uses RunState.Rng.Seed instead of removed Rng.Seed)
         public bool VaryAncientByFloor { get; set; } = false;
 

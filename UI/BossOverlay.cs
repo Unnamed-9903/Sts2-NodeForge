@@ -131,6 +131,17 @@ namespace NodeForge
             var st = RunState();
             if (st?.Act == null) { SyncToast.Show(UiText.T("当前不在跑局中。", "Not in a run.")); return; }
 
+            // Not allowed while standing in a Boss room.
+            try
+            {
+                if (st.CurrentRoom != null && st.CurrentRoom.RoomType == MegaCrit.Sts2.Core.Rooms.RoomType.Boss)
+                {
+                    SyncToast.Show(UiText.T("Boss 房内无法修改 Boss。", "Cannot edit bosses while inside a boss room."));
+                    return;
+                }
+            }
+            catch { }
+
             // (Re)build which-boss options with CURRENT (localized) names.
             _which.Clear();
             string mainName = SafeName(st, false), secondName = SafeName(st, true);

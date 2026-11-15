@@ -17,6 +17,18 @@ namespace NodeForge.Patches
             EditHistory.Clear();
             BulkHistory.Clear();
             try { CombatExchange.ResetForRun(); } catch { }
+
+            // Optional (default OFF, session-only, singleplayer only): auto-apply the Menu-1 bulk rule to
+            // every newly generated map. Disabled in multiplayer to avoid host/client map divergence.
+            try
+            {
+                if (Settings.Current.AutoApplyFutureMaps && !NetAuth.IsMultiplayer())
+                {
+                    var snap = MapNodeService.ConvertMap(__result);
+                    if (snap.Changed.Count > 0) BulkHistory.Push(snap);
+                }
+            }
+            catch (System.Exception e) { Log.Warn("auto apply future map: " + e.Message); }
         }
     }
 

@@ -22,6 +22,8 @@ namespace NodeForge
         private const ulong SacrificeDoneOpcode = 0x4E46_5344_4F4EUL; // "NFSDON"
         // Opcode for pool state broadcast (host -> clients), for read-only display.
         private const ulong PoolOpcode = 0x4E46_504F_4F4CUL; // "NFPOOL"
+        // Opcode for a client asking the host to resend the pool value (client -> host).
+        private const ulong PoolReqOpcode = 0x4E46_5051_5354UL; // "NFPQST"
         // Opcode for boss-change sync (host -> clients).
         private const ulong BossOpcode = 0x4E46_424F_5353UL; // "NFBOSS"
 
@@ -50,6 +52,7 @@ namespace NodeForge
                 RitsuLibSidecarBus.RegisterHandler(PoolOpcode, OnReceivePool);
                 RitsuLibSidecarBus.RegisterHandler(BossOpcode, OnReceiveBoss);
                 RitsuLibSidecarBus.RegisterHandler(SacrificeDoneOpcode, OnReceiveSacrificeDone);
+                RitsuLibSidecarBus.RegisterHandler(PoolReqOpcode, OnReceivePoolRequest);
                 Log.Info("net: sidecar handler registered (opcode " + Opcode + ", " + SacrificeOpcode + ", " + PoolOpcode + ")");
             }
             catch (Exception e) { Log.Warn("net: register handler failed: " + e.Message); }
@@ -59,6 +62,45 @@ namespace NodeForge
         private static readonly System.Collections.Generic.Dictionary<long, Command> _pending = new();
 
         private static long Key(MapCoord c) => ((long)c.col << 32) ^ (uint)c.row;
+
+        // While a bulk operation runs we suppress per-node map rebuilds and do ONE refresh at the end.
+        private static int _suppressRefresh;
+        public static bool IsRefreshSuppressed { get { return _suppressRefresh > 0; } }
+
+        private static bool _refreshQueued;
+        private static DateTime _lastNodeToastUtc = DateTime.MinValue;
+
+        /// <summary>Coalesced full-map refresh: many edits arriving in the same window result in ONE rebuild.
+        /// This is important in multiplayer where a bulk edit sends one command per node to every client.</summary>
+        public static void RequestMapRefresh()
+        {
+            if (_refreshQueued) return;
+            _refreshQueued = true;
+            try
+            {
+                var game = MegaCrit.Sts2.Core.Nodes.NGame.Instance;
+                var tree = game?.GetTree();
+                if (tree == null) { _refreshQueued = false; return; }
+                var timer = tree.CreateTimer(0.08, true, false, false);
+                if (timer == null) { _refreshQueued = false; return; }
+                timer.Timeout += () =>
+                {
+                    _refreshQueued = false;
+                    try { RunManager.Instance?.InvokeMapChanged(false); } catch { }
+                };
+            }
+            catch { _refreshQueued = false; }
+        }
+        public static void BeginBatch() => _suppressRefresh++;
+        public static void EndBatch()
+        {
+            try
+            {
+                if (_suppressRefresh > 0) _suppressRefresh--;
+                if (_suppressRefresh == 0) RequestMapRefresh();
+            }
+            catch { }
+        }
 
         /// <summary>Client: ask the host to perform a relic sacrifice for this player (host is authoritative
         /// for relic removal + points, so all peers stay in sync).</summary>
@@ -127,6 +169,29 @@ namespace NodeForge
                 RelicSacrifice.ClientRemoveSacrificed(netId, relicId);
             }
             catch (Exception e) { Log.Warn("net: recv sacrifice done: " + e.Message); }
+        }
+
+        /// <summary>Client: ask the host to resend the current pool value (e.g. when opening the panel).</summary>
+        public static void RequestPool()
+        {
+            try
+            {
+                var rm = RunManager.Instance;
+                if (rm?.NetService?.Type != MegaCrit.Sts2.Core.Multiplayer.Game.NetGameType.Client) return;
+                RitsuLibSidecarHighLevelSend.TrySendAsClient(rm, PoolReqOpcode, Array.Empty<byte>(),
+                    RitsuLibSidecarDeliverySemantics.StableSync);
+            }
+            catch (Exception e) { Log.Warn("net: request pool: " + e.Message); }
+        }
+
+        private static void OnReceivePoolRequest(RitsuLibSidecarDispatchContext ctx)
+        {
+            try
+            {
+                if (!CombatExchange.IsAuthority) return;
+                BroadcastPool();
+            }
+            catch (Exception e) { Log.Warn("net: recv pool req: " + e.Message); }
         }
 
         /// <summary>Host: broadcast the current pool value so clients can display the real balance.</summary>
@@ -348,9 +413,15 @@ namespace NodeForge
 
                 var cmd = Decode(ctx.Payload);
                 ApplyLocal(cmd);
-                SyncToast.Show(UiText.T(
-                    $"主机{(cmd.Kind == Op.Revert ? "还原" : "修改")}了节点 ({cmd.Col},{cmd.Row}) → {NodeTypeCatalog.ToLabel((MapPointType)cmd.PointType)}",
-                    $"Host {(cmd.Kind == Op.Revert ? "reverted" : "changed")} node ({cmd.Col},{cmd.Row}) -> {NodeTypeCatalog.ToLabel((MapPointType)cmd.PointType)}"));
+                // Throttle toasts: a bulk edit sends one command per node; don't spam N toasts.
+                var now = DateTime.UtcNow;
+                if ((now - _lastNodeToastUtc).TotalMilliseconds >= 400)
+                {
+                    _lastNodeToastUtc = now;
+                    SyncToast.Show(UiText.T(
+                        $"主机{(cmd.Kind == Op.Revert ? "还原" : "修改")}了节点 ({cmd.Col},{cmd.Row}) → {NodeTypeCatalog.ToLabel((MapPointType)cmd.PointType)}",
+                        $"Host {(cmd.Kind == Op.Revert ? "reverted" : "changed")} node ({cmd.Col},{cmd.Row}) -> {NodeTypeCatalog.ToLabel((MapPointType)cmd.PointType)}"));
+                }
             }
             catch (Exception e) { Log.Warn("net: receive failed: " + e.Message); }
         }
@@ -369,13 +440,17 @@ namespace NodeForge
                 if (p == null) { Log.Warn($"net: coord {cmd.Col},{cmd.Row} not on local map, skip"); SyncToast.Show(UiText.T($"收到主机节点修改 ({cmd.Col},{cmd.Row})，但本地无该节点（不同步）", $"Got host node change ({cmd.Col},{cmd.Row}) but no such local node (out of sync)")); return; }
 
                 // Diagnostic: snapshot all point types before, to detect unintended neighbour changes.
+                // (Skipped during bulk ops — it would be O(n^2).)
                 System.Collections.Generic.Dictionary<MapCoord, MapPointType>? snap = null;
-                try
+                if (_suppressRefresh == 0)
                 {
-                    snap = new System.Collections.Generic.Dictionary<MapCoord, MapPointType>();
-                    foreach (var q in map.GetAllMapPoints()) { try { snap[q.coord] = q.PointType; } catch { } }
+                    try
+                    {
+                        snap = new System.Collections.Generic.Dictionary<MapCoord, MapPointType>();
+                        foreach (var q in map.GetAllMapPoints()) { try { snap[q.coord] = q.PointType; } catch { } }
+                    }
+                    catch { }
                 }
-                catch { }
 
                 p.PointType = (MapPointType)cmd.PointType;
 
@@ -387,7 +462,8 @@ namespace NodeForge
                 else ForcedEventRegistry.Set(coord, string.IsNullOrEmpty(cmd.ForcedId) ? null : cmd.ForcedId);
 
                 // Refresh the whole map so icons update reliably (RefreshVisualsInstantly doesn't set icons).
-                try { RunManager.Instance?.InvokeMapChanged(false); } catch { }
+                // Suppressed during bulk operations (one rebuild at the end instead of N).
+                if (_suppressRefresh == 0) RequestMapRefresh();
                 // Diagnostic: log any OTHER coord whose type changed (should be none).
                 try
                 {
@@ -414,4 +490,5 @@ namespace NodeForge
         }
     }
 }
+
 

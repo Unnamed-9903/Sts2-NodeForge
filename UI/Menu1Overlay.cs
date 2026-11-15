@@ -133,6 +133,16 @@ namespace NodeForge
             actions1.AddChild(all); actions1.AddChild(none);
             root.AddChild(actions1);
 
+            // Session-only option (default OFF): auto-apply this rule to newly generated maps.
+            // Singleplayer only (multiplayer would diverge host/client maps). Not shown in settings page.
+            _autoFuture = new CheckBox
+            {
+                Text = T("后续地图自动替换（仅本次游戏，默认关）", "Auto-replace future maps (this session, off by default)"),
+            };
+            _autoFuture.AddThemeFontSizeOverride("font_size", 13);
+            _autoFuture.Toggled += on => { try { Settings.Current.AutoApplyFutureMaps = on; } catch { } };
+            root.AddChild(_autoFuture);
+
             var actions2 = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
             var applyNow = UiTheme.MakeButton(T("应用到当前地图", "Apply to current map"), 15);
             applyNow.CustomMinimumSize = new Vector2(170f, 40f);
@@ -152,6 +162,7 @@ namespace NodeForge
 
         private Button? _undoBulkBtn;
         private Button? _applyBtn;
+        private CheckBox? _autoFuture;
 
         private static MegaCrit.Sts2.Core.Runs.IRunState? RunState()
         {
@@ -230,11 +241,16 @@ namespace NodeForge
             if (map == null) { _status.Text = T("当前不在跑局中。", "Not in a run."); UpdateUndoBulk(); return; }
             // Undo through the same command path (locally applied + broadcast if host) with protection.
             var prot = MapNodeService.CollectProtected(map, RunState());
-            foreach (var (coord, prev) in snap.Changed)
+            NodeForgeNet.BeginBatch();
+            try
             {
-                if (prot.Contains(coord)) continue;
-                NodeForgeNet.SubmitRevert(coord, prev, false, null, 0);
+                foreach (var (coord, prev) in snap.Changed)
+                {
+                    if (prot.Contains(coord)) continue;
+                    NodeForgeNet.SubmitRevert(coord, prev, false, null, 0);
+                }
             }
+            finally { NodeForgeNet.EndBatch(); }
             try { MegaCrit.Sts2.Core.Nodes.Screens.Map.NMapScreen.Instance?.RefreshAllPointVisuals(); } catch { }
             TrySave();
             UpdateUndoBulk();
@@ -351,6 +367,13 @@ namespace NodeForge
             {
                 _applyBtn.Disabled = !NetAuth.BatchAllowed();
                 _applyBtn.TooltipText = NetAuth.BatchAllowed() ? "" : T("需进入游戏（跑局中）后才能批量修改", "Bulk editing is only available during a run");
+            }
+            if (_autoFuture != null)
+            {
+                bool mp = NetAuth.IsMultiplayer();
+                _autoFuture.ButtonPressed = Settings.Current.AutoApplyFutureMaps && !mp;
+                _autoFuture.Disabled = mp;
+                _autoFuture.TooltipText = mp ? T("联机模式禁用（避免主客地图不一致）", "Disabled in multiplayer (would desync maps)") : "";
             }
             _backdrop.Visible = true;
             _center.Visible = true;

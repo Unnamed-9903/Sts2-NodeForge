@@ -953,7 +953,15 @@ namespace NodeForge
                     : T("需进入游戏（跑局中）后才能批量修改", "Bulk editing is only available during a run"));
             }
             RefreshResource();
-            if (CombatExchange.Active && CombatExchange.IsAuthority) { try { NodeForgeNet.BroadcastPool(); } catch { } }
+            if (CombatExchange.Active)
+            {
+                try
+                {
+                    if (CombatExchange.IsAuthority) NodeForgeNet.BroadcastPool();
+                    else NodeForgeNet.RequestPool();   // client: ask host for the real balance
+                }
+                catch { }
+            }
             _backdrop.Visible = true;
             _center.Visible = true;
             if (_tipLayer != null) _tipLayer.Visible = true;
@@ -1154,18 +1162,23 @@ namespace NodeForge
                     var map = CurrentMap();
                     if (map == null) { UpdateUndoButton(); return; }
                     var prot = MapNodeService.CollectProtected(map, RunState());
-                    foreach (var (coord, prev) in snap.Changed)
+                    NodeForgeNet.BeginBatch();
+                    try
                     {
-                        try
+                        foreach (var (coord, prev) in snap.Changed)
                         {
-                            if (prot.Contains(coord)) continue;   // never modify protected nodes
-                            var p = map.GetPoint(coord);
-                            if (p == null) continue;
-                            NodeForgeNet.SubmitRevert(coord, prev, false, null, 0);
-                            RefreshNodeVisual(p);
+                            try
+                            {
+                                if (prot.Contains(coord)) continue;   // never modify protected nodes
+                                var p = map.GetPoint(coord);
+                                if (p == null) continue;
+                                NodeForgeNet.SubmitRevert(coord, prev, false, null, 0);
+                                RefreshNodeVisual(p);
+                            }
+                            catch { }
                         }
-                        catch { }
                     }
+                    finally { NodeForgeNet.EndBatch(); }
                     try { MegaCrit.Sts2.Core.Nodes.Screens.Map.NMapScreen.Instance?.RefreshAllPointVisuals(); } catch { }
                     TrySave();
                     _status.AddThemeColorOverride("font_color", UiTheme.Ok);
@@ -1294,10 +1307,9 @@ namespace NodeForge
             try
             {
                 MapMarks.MarkEdited(point.coord);
-                // Reliable full refresh: rebuild the map nodes so icons (incl. style-mod overrides and Boss
-                // spine art) are correct. RefreshVisualsInstantly alone does NOT update the icon texture.
-                try { MegaCrit.Sts2.Core.Runs.RunManager.Instance?.InvokeMapChanged(false); }
-                catch { }
+                if (NodeForgeNet.IsRefreshSuppressed) return;
+                // Reliable (and coalesced) full refresh so icons match the real node type.
+                NodeForgeNet.RequestMapRefresh();
             }
             catch (Exception e) { Log.Warn("refresh node visual: " + e.Message); }
         }
